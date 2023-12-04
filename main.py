@@ -58,20 +58,31 @@ def download_commit_data(repo: str, branch_name="main"):
     main_branch.checkout()
 
 
-def utc_to_epoch(time: datetime | None) -> float | None:
-    if time is None:
-        return None
-    return int(time.strftime("%s"))
+def log_commits(branch_name: str):
+    print("Logging all commits and their TODO count...")
+    repo = Repo(GIT_REPO)
+    main_branch = repo.heads[branch_name]
 
+    all_commits = list(reversed(list(repo.iter_commits(main_branch.name))))
 
-def state_to_color(state: str) -> rr.datatypes.Rgba32Like:
-    if state == "open":
-        return 255, 255, 255, 255
-    elif state == "closed":
-        return 0, 255, 0, 255
-    else:
-        print(f"unknown state {state}")
-        return 0, 0, 255, 255
+    # Iterate through the list of commits
+    for i, commit in enumerate(all_commits):
+        todo_count = 0
+        for blob in commit.tree.traverse():
+            if blob.type == "blob":  # blobs are files
+                todo_count += (
+                    blob.data_stream.read().decode(errors="ignore").count("TODO(")
+                )
+
+        rr.set_time_sequence("commit_idx", i)
+        rr.set_time_seconds("time", commit.authored_datetime.timestamp())
+
+        rr.log(
+            f"commit/sha_{commit.hexsha[:7]}",
+            rr.TextLog(f"{commit.hexsha} - {commit.author.name} - {commit.summary}"),
+        )
+        rr.log("plot/todos", rr.TimeSeriesScalar(scalar=todo_count))
+        rr.log("plot/commits", rr.TimeSeriesScalar(scalar=i))
 
 
 @dataclass
@@ -100,59 +111,37 @@ class Issue:
         )
 
     @property
-    def created_at_epoch(self):
-        return utc_to_epoch(self.created_at)
+    def created_at_timestamp(self) -> float:
+        return self.created_at.timestamp()
 
     @property
-    def closed_at_epoch(self):
-        return utc_to_epoch(self.closed_at)
+    def closed_at_timestamp(self) -> float | None:
+        if self.closed_at is None:
+            return None
+        return self.closed_at.timestamp()
 
     @property
-    def state_color(self):
-        return state_to_color(self.state)
+    def state_color(self) -> rr.datatypes.Rgba32Like:
+        if self.state == "open":
+            return 255, 255, 255, 255
+        elif self.state == "closed":
+            return 0, 255, 0, 255
+        else:
+            print(f"unknown state {self.state}")
+            return 0, 0, 255, 255
 
 
 def log_issues():
-    """
-       {
-      "author": {
-        "id": "MDQ6VXNlcjE2NjU2Nzc=",
-        "is_bot": false,
-        "login": "jprochazk",
-        "name": "Jan Procházka"
-      },
-      "closedAt": null,
-      "labels": [
-        {
-          "id": "LA_kwDOHJFhi88AAAABCMO3ug",
-          "name": "🕸️ web",
-          "description": "regarding running the viewer in a browser",
-          "color": "bfdadc"
-        },
-        {
-          "id": "LA_kwDOHJFhi88AAAABIU2s7Q",
-          "name": "🧑‍💻 dev experience",
-          "description": "developer experience (excluding CI)",
-          "color": "1d76db"
-        }
-      ],
-      "number": 4428,
-      "state": "OPEN",
-      "title": "Remove `build_demo_app.py`",
-      "updatedAt": "2023-12-04T14:09:53Z",
-      "url": "https://github.com/rerun-io/rerun/issues/4428"
-    },
-      :return:
-    """
     issues_data = json.loads(ISSUE_DATA_FILE.read_text())
     issues = []
 
     print("Logging issues...")
 
-    for issue_data in issues_data:
+    for i, issue_data in enumerate(issues_data):
         issue = Issue.from_json(issue_data)
 
-        rr.set_time_seconds("time", issue.created_at_epoch)
+        rr.set_time_sequence("issue_num", issue.number)
+        rr.set_time_seconds("time", issue.created_at_timestamp)
         rr.log(
             f"issues/#{issue.number}",
             rr.TextLog(issue.title, color=issue.state_color, level=issue.state),
@@ -160,14 +149,12 @@ def log_issues():
 
         issues.append(issue)
 
-    # issues.sort(key=lambda issue: issue.created_at)
-
     print("Logging change over time...")
 
-    created_closed_events = [(issue.created_at_epoch, 1) for issue in issues] + [
-        (issue.closed_at_epoch, -1)
+    created_closed_events = [(issue.created_at_timestamp, 1) for issue in issues] + [
+        (issue.closed_at_timestamp, -1)
         for issue in issues
-        if issue.closed_at_epoch is not None
+        if issue.closed_at_timestamp is not None
     ]
     created_closed_events.sort(key=lambda x: x[0])
     num_open = 0
@@ -223,6 +210,7 @@ def main() -> None:
         download_commit_data(args.repo, args.branch)
 
     log_issues()
+    log_commits(args.branch)
 
     rr.script_teardown(args)
 
