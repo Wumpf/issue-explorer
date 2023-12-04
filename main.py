@@ -14,6 +14,20 @@ from git import Repo
 DATA_DIR = Path(__file__).parent / "data"
 ISSUE_DATA_FILE = DATA_DIR / "issues.json"
 GIT_REPO = DATA_DIR / "repo"
+TODO_CACHE_FILE = DATA_DIR / "todo_cache.json"
+
+TODO_CACHE = {}
+
+
+def load_cache():
+    global TODO_CACHE
+    if TODO_CACHE_FILE.exists():
+        TODO_CACHE = json.loads(TODO_CACHE_FILE.read_bytes())
+
+
+def save_cache():
+    global TODO_CACHE
+    TODO_CACHE_FILE.write_text(json.dumps(TODO_CACHE))
 
 
 if not DATA_DIR.exists():
@@ -68,12 +82,17 @@ def log_commits(branch_name: str):
 
     commit_count_per_author = defaultdict(lambda: 0)
     for i, commit in enumerate(all_commits):
-        todo_count = 0
-        for blob in commit.tree.traverse():
-            if blob.type == "blob":  # blobs are files
-                todo_count += (
-                    blob.data_stream.read().decode(errors="ignore").count("TODO(")
-                )
+        # this is expensive, so we cache it
+        if commit.hexsha in TODO_CACHE:
+            todo_count = TODO_CACHE[commit.hexsha]
+        else:
+            todo_count = 0
+            for blob in commit.tree.traverse():
+                if blob.type == "blob":  # blobs are files
+                    todo_count += (
+                        blob.data_stream.read().decode(errors="ignore").count("TODO(")
+                    )
+            TODO_CACHE[commit.hexsha] = todo_count
 
         commit_count_per_author[commit.author.name] += 1
 
@@ -215,8 +234,12 @@ def main() -> None:
         download_issue_data(args.repo)
         download_commit_data(args.repo, args.branch)
 
+    load_cache()
+
     log_issues()
     log_commits(args.branch)
+
+    save_cache()
 
     rr.script_teardown(args)
 
