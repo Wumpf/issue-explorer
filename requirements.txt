@@ -1,2 +1,7 @@
 rerun-sdk==0.11
 pygithub
+GitPython==3.1.40
+
+
+# dev
+black
