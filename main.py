@@ -1,5 +1,6 @@
 import json
 import subprocess
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
@@ -65,7 +66,7 @@ def log_commits(branch_name: str):
 
     all_commits = list(reversed(list(repo.iter_commits(main_branch.name))))
 
-    # Iterate through the list of commits
+    commit_count_per_author = defaultdict(lambda: 0)
     for i, commit in enumerate(all_commits):
         todo_count = 0
         for blob in commit.tree.traverse():
@@ -74,6 +75,8 @@ def log_commits(branch_name: str):
                     blob.data_stream.read().decode(errors="ignore").count("TODO(")
                 )
 
+        commit_count_per_author[commit.author.name] += 1
+
         rr.set_time_sequence("commit_idx", i)
         rr.set_time_seconds("time", commit.authored_datetime.timestamp())
 
@@ -81,8 +84,11 @@ def log_commits(branch_name: str):
             f"commit/sha_{commit.hexsha[:7]}",
             rr.TextLog(f"{commit.hexsha} - {commit.author.name} - {commit.summary}"),
         )
-        rr.log("plot/todos", rr.TimeSeriesScalar(scalar=todo_count))
-        rr.log("plot/commits", rr.TimeSeriesScalar(scalar=i))
+        rr.log("plot/commits/todos", rr.TimeSeriesScalar(scalar=todo_count))
+        rr.log("plot/commits/count", rr.TimeSeriesScalar(scalar=i))
+
+        for author, cnt in commit_count_per_author.items():
+            rr.log(f'plot/commits/authors/"{author}"', rr.TimeSeriesScalar(scalar=cnt))
 
 
 @dataclass
